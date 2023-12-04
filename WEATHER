@@ -1,0 +1,93 @@
+import sqlite3
+import pandas as pd
+import re
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import numpy as np
+from sqlite3.dbapi2 import connect
+
+a = sqlite3.connect('weather.db')#Создание базы даных
+cursor = a.cursor()
+df = pd.read_csv('27719.01.11.2009.23.11.2023.1.0.0.ru.utf8.00000000.csv',sep =';',encoding = 'UTF-8', skiprows = 6, low_memory=False)#Загрузка файла и пропуск ненужных строк
+df = df.reset_index()#Создание индекса
+s = ' '
+df.columns =list(df.columns[1:]) + [s]#Сдвигаем название колонок на их место
+df1 = df[df['Местное время в Туле'].str.contains(r'^\d\d.\d\d.\d\d\d\d.(09:00|12:00|15:00|18:00|21:00)')]#Ищим дневное время суток
+df[['Date','Time']] = df['Местное время в Туле'].str.split(' ',expand=True)#Делим колонку на колонки дата и время
+df11 = df[['Date','T','Po']]#Оставляем нужные нам колонки
+df11 = df11.groupby('Date').agg({'T':'mean','Po':'mean'})#Групируем по дате и усредняем температуру и давление
+df11 = df11.reset_index()#Востанавливаем индекс
+df11['Date'] = pd.to_datetime(df11['Date'])#Меняем тип данных дат из строк на даты
+DF = df11.groupby(pd.Grouper(key='Date',axis=0,freq='D')).sum()#Групперуем даты по дням
+DF = DF.reset_index()#Востанавливаю индекс
+DF['Date'] = DF['Date'].astype(str)#Меняю тип данных даты на строки для заполнения таблицы в базе данных
+print(DF)
+
+DATE = DF['Date']#Сохраняю каждый столбец в своей переменной
+TEMP = DF['T']
+PRESSURE = DF['Po']
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS Weather(
+id  INTEGRER PRIMARY KEY,
+date TEXT NOT NULL,
+temp REAL,
+pressure REAL
+)
+''')#Создаю таблицуб кудф буду загружать данные
+for i in range(len(DF.index)):
+  cursor.execute('INSERT INTO Weather (date,temp,pressure) VALUES (?,?,?)',(DATE.loc[i],TEMP.loc[i],PRESSURE.loc[i]))#Загружаем данные из переменных
+cursor.execute('CREATE INDEX idx_date ON Weather(date)')#Создаем индексы
+cursor.execute('CREATE INDEX idx_temp ON Weather(temp)')
+cursor.execute('CREATE INDEX idx_pressure ON Weather(pressure)')
+
+cursor.execute('SELECT date, temp FROM Weather WHERE temp < -5 AND temp > -6')#Выбираем дни с температурой от -5 до -6
+rows = cursor.fetchall()
+for row in rows:
+  print(row)
+
+def regexp(expr, item):#Функция для работы с регулярными выражениями
+  reg = re.compile(expr)
+  return reg.search(item)is not None
+
+a.create_function('REGEXP',2,regexp)#Подключение функции
+cursor.execute('SELECT date,temp FROM Weather WHERE date REGEXP ?', [r'\d{4}.02.12'])#Выбираем все строки с 12 февраля
+rows1 = cursor.fetchall()
+for row1 in rows1:
+  print(row1)
+
+a.create_function('REGEXP',2,regexp)
+cursor.execute('SELECT date,temp FROM Weather WHERE temp > 0 AND date REGEXP ?',[r'2016.\d\d.\d\d'])#Ищим все строки 2016 года, у которых температура >0
+rows2 = cursor.fetchall()
+print(len(rows2))
+
+cursor.execute('SELECT date,temp,pressure FROM Weather')#Выбираем нужные столбцы
+resullt = cursor.fetchall()
+date = []#Созаем пустые списки, которые заполним даными из столбцов
+temp = []
+pressure = []
+for i in resullt:#Заполняем списки данными
+  date.append(np.datetime64(i[0]))
+  temp.append(i[1])
+  pressure.append(i[2])
+plt.figure(figsize=(100,10))#Задаем размер графика
+plt.title('Weather')#Название графика
+plt.xlabel('Date')#Название оси X
+plt.ylabel('Temperature and Pressure')#Название оси Y
+plt.plot(date,temp,label='Temp')#Визуалезируем температуру
+plt.plot( date,pressure,label='pressure')#Визалезируем давление
+plt.legend(loc='upper left')#Создаум легенду
+plt.show()
+
+cursor.execute('SELECT date,temp FROM Weather WHERE temp = -25')#Выбираем дни с -25 градусами
+rows3 = cursor.fetchall()
+rows3 = rows3[0:5]#Оставляем первые пять
+for row3 in rows3:
+  print(row3)
+
+cursor.execute('SELECT MIN (temp) AS minimum FROM Weather')#Выбираем самую низкую температуру
+rows4 = cursor.fetchall()
+print(rows4)
+
+cursor.execute('SELECT MAX (temp) AS maximum FROM Weather')#Выбираем самую высокую температуру
+rows5 = cursor.fetchall()
+print(rows5)
